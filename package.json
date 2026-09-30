@@ -1,6 +1,6 @@
 {
   "name": "@teelabs/native-utility-pack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reusable React Native utility components from teelabs.",
   "license": "MIT",
   "repository": {
@@ -53,6 +53,6 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   }
 }

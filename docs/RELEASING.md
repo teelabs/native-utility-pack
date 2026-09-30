@@ -1,5 +1,7 @@
 # Releasing Native Utility Pack
 
+The repository pins Node.js `24.20.0` in `.node-version`. Run `fnm use` before local release verification; CI uses Node 24 as well.
+
 ## GitHub Pages
 
 The `pages.yml` workflow builds the root package, exports the Expo Web app from `examples/showcase`, and deploys only `examples/showcase/dist`.

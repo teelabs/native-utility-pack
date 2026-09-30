@@ -53,118 +53,259 @@ export function ReelPicker<T extends number | string = number>({
   const rowHeight = animation?.stepDistance ?? DEFAULT_ROW_HEIGHT;
   const radius = Math.floor(visibleRows / 2);
   const initialValue = value ?? defaultValue ?? min;
-  const [internalValue, setInternalValue] = useState<T>(initialValue);
-  const currentValue = value ?? internalValue;
+  const [displayValue, setDisplayValue] = useState<T>(initialValue);
+  const currentValue = displayValue;
   const numeric = isNumber(currentValue) && isNumber(min) && isNumber(max);
   const currentNumber = numeric ? currentValue : 0;
   const minNumber = isNumber(min) ? min : 0;
   const maxNumber = isNumber(max) ? max : 0;
   const numericStep = Math.max(0.000001, step);
-  const baseOffset = -(radius - 1) * rowHeight;
+  // Keep extra rows mounted outside the masked window. A fast native gesture
+  // can commit several steps before React paints the next render; the buffer
+  // keeps the strip populated while that controlled update catches up.
+  const renderRadius = radius + 4;
+  const baseOffset = -(renderRadius - 1) * rowHeight;
   const reelOffset = useRef(new Animated.Value(baseOffset)).current;
+  const currentValueRef = useRef(currentValue);
+  const gestureStartValueRef = useRef(currentValue);
+  const gestureActiveRef = useRef(false);
+  const boundaryEmittedRef = useRef(false);
+  const pendingControlledValueRef = useRef<T | null>(null);
+  const pendingReleaseValueRef = useRef<T | null>(null);
+  const releaseGenerationRef = useRef(0);
+  const latestPropsRef = useRef({
+    animation,
+    max,
+    min,
+    onBoundaryReached,
+    onChange,
+    onSwipeEnd,
+    onSwipeMove,
+    onSwipeStart,
+    reducedMotion,
+    step,
+    value,
+  });
+  latestPropsRef.current = {
+    animation,
+    max,
+    min,
+    onBoundaryReached,
+    onChange,
+    onSwipeEnd,
+    onSwipeMove,
+    onSwipeStart,
+    reducedMotion,
+    step,
+    value,
+  };
+
+  useEffect(() => {
+    if (value === undefined) return;
+    if (gestureActiveRef.current) {
+      pendingControlledValueRef.current = value;
+      return;
+    }
+    pendingControlledValueRef.current = null;
+    currentValueRef.current = value;
+    setDisplayValue(value);
+  }, [value]);
 
   useEffect(() => {
     reelOffset.setValue(baseOffset);
-  }, [baseOffset, currentValue, reelOffset]);
+  }, [baseOffset, reelOffset]);
 
   const setValue = (next: T) => {
-    setInternalValue(next);
-    onChange?.(next);
+    currentValueRef.current = next;
+    setDisplayValue(next);
+    latestPropsRef.current.onChange?.(next);
+  };
+
+  const previewValue = (next: T) => {
+    currentValueRef.current = next;
+    setDisplayValue(next);
+  };
+
+  const finishWithControlledValue = (fallback: T) => {
+    const controlledValue =
+      pendingControlledValueRef.current ?? latestPropsRef.current.value;
+    pendingControlledValueRef.current = null;
+    previewValue(controlledValue ?? fallback);
   };
 
   const emitBoundary = (boundary: "max" | "min") => {
-    onBoundaryReached?.(boundary);
+    if (boundaryEmittedRef.current) return;
+    boundaryEmittedRef.current = true;
+    latestPropsRef.current.onBoundaryReached?.(boundary);
   };
 
-  const moveBy = (direction: "up" | "down", requestedSteps: number) => {
-    if (!numeric || requestedSteps <= 0) return 0;
+  const valueAfterSteps = (
+    startValue: T,
+    direction: "up" | "down",
+    requestedSteps: number,
+  ) => {
+    const latestMin = latestPropsRef.current.min;
+    const latestMax = latestPropsRef.current.max;
+    const latestStep = latestPropsRef.current.step ?? 1;
+    if (
+      !isNumber(startValue) ||
+      !isNumber(latestMin) ||
+      !isNumber(latestMax) ||
+      requestedSteps <= 0
+    ) {
+      return { boundedSteps: 0, nextValue: startValue, clamped: false };
+    }
+    const latestNumericStep = Math.max(0.000001, latestStep);
     const available =
       direction === "up"
-        ? Math.floor((maxNumber - currentNumber) / numericStep)
-        : Math.floor((currentNumber - minNumber) / numericStep);
-    const steps = Math.min(requestedSteps, Math.max(0, available));
-    if (steps === 0) {
-      emitBoundary(direction === "up" ? "max" : "min");
-      return 0;
-    }
+        ? Math.floor((latestMax - startValue) / latestNumericStep)
+        : Math.floor((startValue - latestMin) / latestNumericStep);
+    const boundedSteps = Math.min(requestedSteps, Math.max(0, available));
     const nextNumber = clamp(
-      currentNumber + (direction === "up" ? 1 : -1) * numericStep * steps,
-      minNumber,
-      maxNumber,
+      startValue +
+        (direction === "up" ? 1 : -1) * latestNumericStep * boundedSteps,
+      latestMin,
+      latestMax,
     );
-    // Runtime numeric narrowing cannot narrow the generic T parameter for TypeScript.
-    setValue(nextNumber as T);
-    if (nextNumber === minNumber) emitBoundary("min");
-    if (nextNumber === maxNumber) emitBoundary("max");
-    return steps;
+    return {
+      boundedSteps,
+      clamped: boundedSteps < requestedSteps,
+      nextValue: nextNumber as T,
+    };
+  };
+
+  const resolveSteps = (
+    startValue: T,
+    direction: "up" | "down",
+    requestedSteps: number,
+  ) => {
+    const result = valueAfterSteps(startValue, direction, requestedSteps);
+    if (result.clamped || (requestedSteps > 0 && result.boundedSteps === 0)) {
+      emitBoundary(direction === "up" ? "max" : "min");
+    }
+    return result;
   };
 
   const settle = (direction: "up" | "down", steps: number) => {
-    const availableSteps = numeric
-      ? direction === "up"
-        ? Math.floor((maxNumber - currentNumber) / numericStep)
-        : Math.floor((currentNumber - minNumber) / numericStep)
-      : 0;
-    const boundedSteps = Math.min(steps, Math.max(0, availableSteps));
-    const clamped = boundedSteps < steps;
-    const targetOffset =
-      baseOffset + (direction === "up" ? -1 : 1) * rowHeight * boundedSteps;
+    const result = resolveSteps(currentValueRef.current, direction, steps);
+    if (result.boundedSteps > 0) setValue(result.nextValue);
+    const latestAnimation = latestPropsRef.current.animation;
     const duration = Math.min(
-      animation?.maxDuration ?? 1100,
-      animation?.duration ?? 260 + steps * (animation?.stepDuration ?? 70),
+      latestAnimation?.maxDuration ?? 1100,
+      latestAnimation?.duration ??
+        260 + steps * (latestAnimation?.stepDuration ?? 70),
     );
-    const finish = () => {
-      moveBy(direction, boundedSteps);
+    if (
+      latestPropsRef.current.reducedMotion ||
+      latestAnimation?.reducedMotion
+    ) {
       reelOffset.setValue(baseOffset);
-    };
-    if (boundedSteps === 0) {
-      emitBoundary(direction === "up" ? "max" : "min");
-    }
-    if (reducedMotion || animation?.reducedMotion) {
-      finish();
       return;
     }
-    const transition = clamped
+    const transition = result.clamped
       ? Animated.spring(reelOffset, {
-          bounciness: animation?.spring?.overshoot ?? 12,
-          damping: animation?.spring?.damping ?? 14,
-          mass: animation?.spring?.mass ?? 1,
-          stiffness: animation?.spring?.stiffness ?? 140,
+          damping: latestAnimation?.spring?.damping ?? 14,
+          mass: latestAnimation?.spring?.mass ?? 1,
+          stiffness: latestAnimation?.spring?.stiffness ?? 140,
           toValue: baseOffset,
           useNativeDriver: true,
         })
       : Animated.timing(reelOffset, {
           duration,
-          toValue: targetOffset,
+          toValue: baseOffset,
           useNativeDriver: true,
         });
     transition.start(({ finished }: { finished: boolean }) => {
-      if (finished) finish();
+      if (finished) reelOffset.setValue(baseOffset);
     });
   };
 
   const spin = (direction: "up" | "down", steps = 1) => {
-    if (!disabled) settle(direction, steps);
+    if (!disabled) {
+      releaseGenerationRef.current += 1;
+      reelOffset.stopAnimation();
+      const interruptedValue =
+        pendingControlledValueRef.current ??
+        pendingReleaseValueRef.current ??
+        latestPropsRef.current.value ??
+        currentValueRef.current;
+      pendingControlledValueRef.current = null;
+      pendingReleaseValueRef.current = null;
+      gestureActiveRef.current = false;
+      reelOffset.setValue(baseOffset);
+      previewValue(interruptedValue);
+      boundaryEmittedRef.current = false;
+      settle(direction, steps);
+    }
   };
+
+  const selectAdjacentValue = (locationY: number) => {
+    const centerTop = radius * rowHeight;
+    if (locationY < centerTop) spin("down");
+    else if (locationY >= centerTop + rowHeight) spin("up");
+  };
+
+  const projectGesture = (gesture: PanResponderGestureState) => {
+    const projected =
+      gesture.dy +
+      gesture.vy *
+        (latestPropsRef.current.animation?.velocityProjection ?? 180);
+    const direction =
+      Math.abs(gesture.dy) > 0
+        ? gesture.dy < 0
+          ? "up"
+          : "down"
+        : projected < 0
+          ? "up"
+          : "down";
+    const boundedProjection = Math.min(
+      Math.abs(projected),
+      Math.abs(gesture.dy) + rowHeight * 2,
+    );
+    return {
+      direction,
+      projected,
+      steps: Math.max(1, Math.round(boundedProjection / rowHeight)),
+    } as const;
+  };
+
+  const shouldClaimGesture = (gesture: PanResponderGestureState): boolean =>
+    !disabled &&
+    Math.abs(gesture.dy) >
+      (latestPropsRef.current.animation?.activationDistance ?? 8) &&
+    Math.abs(gesture.dy) > Math.abs(gesture.dx);
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponderCapture: (
           _: GestureResponderEvent,
           gesture: PanResponderGestureState,
-        ) =>
-          !disabled &&
-          Math.abs(gesture.dy) > (animation?.activationDistance ?? 8) &&
-          Math.abs(gesture.dy) > Math.abs(gesture.dx),
-        onPanResponderGrant: () => {
+        ) => shouldClaimGesture(gesture),
+        onMoveShouldSetPanResponder: (
+          _: GestureResponderEvent,
+          gesture: PanResponderGestureState,
+        ) => shouldClaimGesture(gesture),
+        onPanResponderGrant: (event: GestureResponderEvent) => {
+          releaseGenerationRef.current += 1;
           reelOffset.stopAnimation();
+          const interruptedValue =
+            pendingControlledValueRef.current ?? pendingReleaseValueRef.current;
+          if (interruptedValue !== null) {
+            previewValue(interruptedValue);
+          }
+          pendingControlledValueRef.current = null;
+          pendingReleaseValueRef.current = null;
           reelOffset.setValue(baseOffset);
-          onSwipeStart?.({
+          gestureActiveRef.current = true;
+          boundaryEmittedRef.current = false;
+          gestureStartValueRef.current = currentValueRef.current;
+          latestPropsRef.current.onSwipeStart?.({
             direction: "up",
             distance: 0,
             steps: 0,
-            value: currentValue,
+            value: currentValueRef.current,
             velocity: 0,
           });
         },
@@ -172,14 +313,27 @@ export function ReelPicker<T extends number | string = number>({
           _: GestureResponderEvent,
           gesture: PanResponderGestureState,
         ) => {
-          const projected =
-            gesture.dy + gesture.vy * (animation?.velocityProjection ?? 180);
-          reelOffset.setValue(baseOffset + gesture.dy);
-          onSwipeMove?.({
-            direction: projected < 0 ? "up" : "down",
+          const direction = gesture.dy < 0 ? "up" : "down";
+          const requestedSteps = Math.floor(Math.abs(gesture.dy) / rowHeight);
+          const result = resolveSteps(
+            gestureStartValueRef.current,
+            direction,
+            requestedSteps,
+          );
+          if (result.boundedSteps > 0) previewValue(result.nextValue);
+          else previewValue(gestureStartValueRef.current);
+          const consumedDistance =
+            (direction === "up" ? -1 : 1) * result.boundedSteps * rowHeight;
+          const remainder = gesture.dy - consumedDistance;
+          reelOffset.setValue(
+            baseOffset + (result.clamped ? remainder * 0.25 : remainder),
+          );
+          const projection = projectGesture(gesture);
+          latestPropsRef.current.onSwipeMove?.({
+            direction: projection.direction,
             distance: Math.abs(gesture.dy),
-            steps: Math.max(0, Math.round(Math.abs(projected) / rowHeight)),
-            value: currentValue,
+            steps: projection.steps,
+            value: currentValueRef.current,
             velocity: gesture.vy,
           });
         },
@@ -187,55 +341,109 @@ export function ReelPicker<T extends number | string = number>({
           _: GestureResponderEvent,
           gesture: PanResponderGestureState,
         ) => {
-          const projected =
-            gesture.dy + gesture.vy * (animation?.velocityProjection ?? 180);
-          const direction = projected < 0 ? "up" : "down";
-          const steps = Math.max(
-            1,
-            Math.round(Math.abs(projected) / rowHeight),
+          const latestAnimation = latestPropsRef.current.animation;
+          const activationDistance = latestAnimation?.activationDistance ?? 8;
+          if (
+            Math.abs(gesture.dy) <= activationDistance &&
+            Math.abs(gesture.dx) <= activationDistance
+          ) {
+            gestureActiveRef.current = false;
+            reelOffset.setValue(baseOffset);
+            finishWithControlledValue(gestureStartValueRef.current);
+            return;
+          }
+          const { direction, steps } = projectGesture(gesture);
+          const result = resolveSteps(
+            gestureStartValueRef.current,
+            direction,
+            steps,
           );
-          settle(direction, steps);
-          onSwipeEnd?.({
+          const fingerResult = valueAfterSteps(
+            gestureStartValueRef.current,
+            direction,
+            Math.floor(Math.abs(gesture.dy) / rowHeight),
+          );
+          const extraSteps = Math.max(
+            0,
+            result.boundedSteps - fingerResult.boundedSteps,
+          );
+          const animationTarget =
+            baseOffset + (direction === "up" ? -1 : 1) * extraSteps * rowHeight;
+          const releaseGeneration = ++releaseGenerationRef.current;
+          pendingReleaseValueRef.current = result.nextValue;
+          if (!Object.is(result.nextValue, gestureStartValueRef.current)) {
+            latestPropsRef.current.onChange?.(result.nextValue);
+          }
+          const finishRelease = () => {
+            if (releaseGeneration !== releaseGenerationRef.current) return;
+            const pendingValue = pendingReleaseValueRef.current;
+            pendingReleaseValueRef.current = null;
+            gestureActiveRef.current = false;
+            reelOffset.setValue(baseOffset);
+            if (pendingValue === null) return;
+            finishWithControlledValue(pendingValue);
+          };
+          if (
+            latestPropsRef.current.reducedMotion ||
+            latestAnimation?.reducedMotion
+          ) {
+            finishRelease();
+          } else {
+            const transition = result.clamped
+              ? Animated.spring(reelOffset, {
+                  damping: latestAnimation?.spring?.damping ?? 14,
+                  mass: latestAnimation?.spring?.mass ?? 1,
+                  stiffness: latestAnimation?.spring?.stiffness ?? 140,
+                  toValue: baseOffset,
+                  useNativeDriver: true,
+                })
+              : Animated.timing(reelOffset, {
+                  duration: Math.min(
+                    latestAnimation?.maxDuration ?? 1100,
+                    latestAnimation?.duration ??
+                      260 + steps * (latestAnimation?.stepDuration ?? 70),
+                  ),
+                  toValue: animationTarget,
+                  useNativeDriver: true,
+                });
+            transition.start(() => finishRelease());
+          }
+          latestPropsRef.current.onSwipeEnd?.({
             direction,
             distance: Math.abs(gesture.dy),
             steps,
-            value: currentValue,
+            value: result.nextValue,
             velocity: gesture.vy,
           });
         },
+        onPanResponderTerminate: () => {
+          releaseGenerationRef.current += 1;
+          reelOffset.stopAnimation();
+          pendingReleaseValueRef.current = null;
+          gestureActiveRef.current = false;
+          reelOffset.setValue(baseOffset);
+          finishWithControlledValue(gestureStartValueRef.current);
+        },
+        onPanResponderTerminationRequest: () => false,
+        onShouldBlockNativeResponder: () => true,
       }),
-    [
-      animation,
-      baseOffset,
-      currentValue,
-      disabled,
-      onSwipeEnd,
-      onSwipeMove,
-      onSwipeStart,
-      reelOffset,
-      rowHeight,
-    ],
+    [baseOffset, disabled, reelOffset, rowHeight],
   );
 
   const reelValues = numeric
-    ? Array.from({ length: radius * 2 + 1 }, (_, index) => {
-        const next = currentNumber + (index - radius) * numericStep;
+    ? Array.from({ length: renderRadius * 2 + 1 }, (_, index) => {
+        const next = currentNumber + (index - renderRadius) * numericStep;
         return next < minNumber || next > maxNumber ? null : (next as T);
       })
-    : Array.from({ length: radius * 2 + 1 }, (_, index) =>
-        index === radius ? currentValue : null,
+    : Array.from({ length: renderRadius * 2 + 1 }, (_, index) =>
+        index === renderRadius ? currentValue : null,
       );
 
   return (
-    <View
-      {...panResponder.panHandlers}
-      accessibilityHint={accessibilityHint}
-      accessibilityLabel={accessibilityLabel}
-      accessibilityRole="adjustable"
-      style={[styles.container, style?.container]}
-    >
+    <View style={[styles.container, style?.container]}>
       {label ? <Text style={[styles.label, style?.label]}>{label}</Text> : null}
       <View
+        {...panResponder.panHandlers}
         style={[
           styles.window,
           { height: rowHeight * visibleRows, width: DEFAULT_WIDTH },
@@ -249,51 +457,63 @@ export function ReelPicker<T extends number | string = number>({
             { transform: [{ translateY: reelOffset }] },
           ]}
         >
-          {reelValues.map((reelValue, index) => (
-            <View
-              key={`${index}-${String(reelValue)}`}
-              style={[styles.row, { height: rowHeight }, style?.row]}
-            >
-              {reelValue === null ? null : (
+          {reelValues.map((reelValue, index) => {
+            const rowContent =
+              reelValue === null ? null : (
                 <Text
                   style={[
-                    index === radius
+                    index === renderRadius
                       ? styles.currentValue
                       : styles.adjacentValue,
-                    index === radius
+                    index === renderRadius
                       ? style?.currentValue
                       : style?.adjacentValue,
                   ]}
                 >
-                  {index === radius
+                  {index === renderRadius
                     ? formatValue(reelValue)
                     : formatAdjacentValue(reelValue)}
                 </Text>
-              )}
-            </View>
-          ))}
+              );
+            const rowStyle = [styles.row, { height: rowHeight }, style?.row];
+            return (
+              <View key={index} style={rowStyle}>
+                {rowContent}
+              </View>
+            );
+          })}
         </Animated.View>
         <View
           pointerEvents="none"
           style={[
             styles.centerSlot,
-            { height: rowHeight, top: rowHeight },
+            { height: rowHeight, top: radius * rowHeight },
             style?.centerSlot,
           ]}
         />
-        <Pressable
-          accessibilityLabel={accessibilityLabel}
-          accessibilityRole="button"
-          disabled={disabled}
-          onPress={() => spin("down")}
+        <View
+          pointerEvents="none"
           style={[styles.control, styles.topControl, style?.control]}
         />
-        <Pressable
-          accessibilityLabel={accessibilityLabel}
-          accessibilityRole="button"
-          disabled={disabled}
-          onPress={() => spin("up")}
+        <View
+          pointerEvents="none"
           style={[styles.control, styles.bottomControl, style?.control]}
+        />
+        <Pressable
+          accessibilityActions={[
+            { name: "decrement", label: accessibilityLabel },
+            { name: "increment", label: accessibilityLabel },
+          ]}
+          accessibilityHint={accessibilityHint}
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="adjustable"
+          disabled={disabled}
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === "decrement") spin("down");
+            else if (event.nativeEvent.actionName === "increment") spin("up");
+          }}
+          onPress={(event) => selectAdjacentValue(event.nativeEvent.locationY)}
+          style={styles.tapSurface}
         />
       </View>
     </View>
@@ -323,6 +543,7 @@ const styles = StyleSheet.create({
   label: { color: "#716762", fontSize: 14, lineHeight: 18 },
   row: { alignItems: "center", justifyContent: "center", width: "100%" },
   strip: { left: 0, position: "absolute", top: 0, width: "100%" },
+  tapSurface: { bottom: 0, left: 0, position: "absolute", right: 0, top: 0 },
   topControl: { top: 0 },
   window: { overflow: "hidden", position: "relative" },
 });

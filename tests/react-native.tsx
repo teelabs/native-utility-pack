@@ -33,21 +33,62 @@ class Value {
   stopAnimation() {}
 }
 
+export const springConfigs: Array<Record<string, unknown>> = [];
+
+let deferAnimationCallbacks = false;
+const pendingAnimationCallbacks: Array<
+  (result: { finished: boolean }) => void
+> = [];
+
+export function setAnimationCallbacksDeferred(deferred: boolean) {
+  deferAnimationCallbacks = deferred;
+  if (!deferred) pendingAnimationCallbacks.length = 0;
+}
+
+export function flushNextAnimationCallback() {
+  pendingAnimationCallbacks.shift()?.({ finished: true });
+}
+
+function finishAnimation(callback?: (result: { finished: boolean }) => void) {
+  if (!callback) return;
+  if (deferAnimationCallbacks) pendingAnimationCallbacks.push(callback);
+  else callback({ finished: true });
+}
+
 export const Animated = {
   Value,
   View: host("animated-view"),
-  spring: () => ({
-    start: (callback?: (result: { finished: boolean }) => void) =>
-      callback?.({ finished: true }),
-  }),
+  spring: (value: unknown, config: Record<string, unknown>) => {
+    springConfigs.push(config);
+    const families = [
+      ["bounciness", "speed"],
+      ["tension", "friction"],
+      ["stiffness", "damping", "mass"],
+    ].filter((family) => family.some((key) => key in config));
+    if (families.length > 1) {
+      throw new Error(
+        "Animated.spring received incompatible configuration families",
+      );
+    }
+    return {
+      start: finishAnimation,
+    };
+  },
   timing: () => ({
-    start: (callback?: (result: { finished: boolean }) => void) =>
-      callback?.({ finished: true }),
+    start: finishAnimation,
   }),
 };
 
+export let lastPanResponderHandlers: Record<
+  string,
+  (...args: unknown[]) => void
+> = {};
+
 export const PanResponder = {
-  create: () => ({ panHandlers: {} }),
+  create: (handlers: Record<string, (...args: unknown[]) => void>) => {
+    lastPanResponderHandlers = handlers;
+    return { panHandlers: handlers };
+  },
 };
 
 export const StyleSheet = {
