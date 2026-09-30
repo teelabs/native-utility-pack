@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Reusable React Native utility components from teelabs.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/teelabs/native-utility-pack"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
