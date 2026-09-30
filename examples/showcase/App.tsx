@@ -1,6 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import {
+  Linking,
   Pressable,
   SafeAreaView,
   ScrollView,
@@ -119,7 +120,7 @@ export default function App() {
         <Pressable
           accessibilityRole="link"
           onPress={() =>
-            setLastEvent("Read the API contract in the repository README.")
+            Linking.openURL("https://github.com/teelabs/native-utility-pack")
           }
           style={styles.footerLink}
         >
