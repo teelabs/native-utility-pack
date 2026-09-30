@@ -44,8 +44,6 @@ jobs:
         run: npm run ci
 
       - name: Publish package with provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           if [ "${{ inputs.dry_run }}" = "true" ]; then
             npm publish --dry-run --access public
