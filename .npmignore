@@ -1,0 +1,10 @@
+.*
+!.npmignore
+components/
+docs/
+examples/
+tests/
+node_modules/
+tsconfig.json
+tsup.config.ts
+vitest.config.ts

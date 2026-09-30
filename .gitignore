@@ -1,0 +1,8 @@
+node_modules/
+.superpowers/
+dist/
+coverage/
+examples/showcase/dist/
+examples/showcase/.expo/
+.env
+.DS_Store

@@ -1,0 +1,17 @@
+{
+  "expo": {
+    "name": "Native Utility Pack Showcase",
+    "slug": "native-utility-pack-showcase",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": ["expo-router"],
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "experiments": {
+      "baseUrl": "/native-utility-pack"
+    }
+  }
+}

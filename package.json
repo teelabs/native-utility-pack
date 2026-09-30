@@ -1,0 +1,54 @@
+{
+  "name": "@teelabs/native-utility-pack",
+  "version": "0.1.0",
+  "description": "Reusable React Native utility components from teelabs.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "components/reel-picker/README.md",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "prettier --check . --ignore-path .prettierignore",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pack:dry-run": "npm pack --dry-run",
+    "ci": "npm run lint && npm run typecheck && npm test && npm run build && npm run pack:dry-run"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.72"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-test-renderer": "^19.1.0",
+    "prettier": "^3.6.2",
+    "react": "^19.1.0",
+    "react-native": "^0.81.0",
+    "react-test-renderer": "^19.1.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

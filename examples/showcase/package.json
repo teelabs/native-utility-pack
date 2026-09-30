@@ -1,0 +1,26 @@
+{
+  "name": "native-utility-pack-showcase",
+  "private": true,
+  "version": "0.1.0",
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "web": "expo start --web",
+    "build:web": "expo export --platform web --output-dir dist"
+  },
+  "dependencies": {
+    "@teelabs/native-utility-pack": "file:../..",
+    "expo": "~54.0.20",
+    "expo-router": "~6.0.14",
+    "expo-status-bar": "~3.0.8",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-web": "^0.21.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^5.9.2"
+  }
+}
