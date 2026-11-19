@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Security
+
+- Update the Expo showcase's transitive `node-forge` dependency to 1.4.3, resolving known vulnerabilities in versions through 1.4.2.
+
 ## [0.1.1] - 2026-09-30
 
 ### Fixed
